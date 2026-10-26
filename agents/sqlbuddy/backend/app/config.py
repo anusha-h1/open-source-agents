@@ -27,14 +27,6 @@ def _positive_int(name: str, default: int, *, maximum: int) -> int:
     return value if 1 <= value <= maximum else default
 
 
-def _bool(name: str, default: bool = False) -> bool:
-    """Read a simple true/false environment setting."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class Settings:
     """Application configuration; secrets are never returned by API routes."""
@@ -45,8 +37,6 @@ class Settings:
         "SQLBUDDY_DATABASE_PATH", str(PROJECT_ROOT / "data" / "sqlbuddy.db")
     )
     frontend_origin: str = os.getenv("SQLBUDDY_FRONTEND_ORIGIN", "http://localhost:5173")
-    access_password: str = os.getenv("SQLBUDDY_ACCESS_PASSWORD", "")
-    require_access_password: bool = _bool("SQLBUDDY_REQUIRE_ACCESS_PASSWORD")
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
     rate_limit_requests: int = _positive_int("SQLBUDDY_RATE_LIMIT_REQUESTS", 20, maximum=10000)
     rate_limit_window_seconds: int = _positive_int(

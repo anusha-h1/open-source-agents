@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { api, ApiError, setAccessPassword } from './api'
+import { api, ApiError } from './api'
 import type { Answer, Dialect, SchemaInput, SessionDetail, SessionSummary } from './types'
 
 const DIALECTS: { value: Dialect; label: string }[] = [
@@ -25,33 +25,12 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [needsLogin, setNeedsLogin] = useState(false)
-  const [accessPassword, setPassword] = useState('')
-  const [loginError, setLoginError] = useState('')
 
   const refreshSessions = useCallback(async () => {
-    try { setSessions(await api.listSessions()) } catch (problem) {
-      if (problem instanceof ApiError && problem.status === 401) setNeedsLogin(true)
-      else setError(errorMessage(problem))
-    }
+    try { setSessions(await api.listSessions()) } catch (problem) { setError(errorMessage(problem)) }
   }, [])
 
   useEffect(() => { void refreshSessions() }, [refreshSessions])
-
-  async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setLoginError('')
-    setAccessPassword(accessPassword)
-    try {
-      const saved = await api.listSessions()
-      setSessions(saved)
-      setNeedsLogin(false)
-      setPassword('')
-    } catch {
-      setAccessPassword(null)
-      setLoginError('That password was not accepted. Please try again.')
-    }
-  }
 
   function parseSchema(raw: string): SchemaInput {
     if (raw.length > 12000) throw new Error('Schema file is too large. Please keep it under 12,000 characters.')
@@ -148,29 +127,11 @@ export default function App() {
     catch { setError('Could not copy automatically. Select the SQL and copy it with Ctrl+C.') }
   }
 
-  if (needsLogin) {
-    return (
-      <main className="access-screen">
-        <form className="access-card" onSubmit={(event) => void login(event)}>
-          <span className="brand-mark">S</span>
-          <p className="eyebrow">PRIVATE SQL WORKSPACE</p>
-          <h1>Welcome to SQLBuddy</h1>
-          <p>Enter the access password provided by the person who set up this workspace.</p>
-          <label htmlFor="access-password">Access password</label>
-          <input id="access-password" type="password" autoComplete="current-password" value={accessPassword} onChange={(event) => setPassword(event.target.value)} required autoFocus />
-          {loginError && <p className="access-error" role="alert">{loginError}</p>}
-          <button className="ask-button" type="submit">Continue <span>↗</span></button>
-          <small>Your password is sent over HTTPS and kept only in this browser tab.</small>
-        </form>
-      </main>
-    )
-  }
-
   return (
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="SQLBuddy home"><span className="brand-mark">S</span><span>sqlbuddy<span className="brand-dot">.</span></span></a>
-        <span className="local-badge"><span /> Private SQL workspace</span>
+        <span className="local-badge"><span /> Runs on your computer</span>
       </header>
       <div className="workspace" id="top">
         <aside className="sidebar" aria-label="Saved sessions">

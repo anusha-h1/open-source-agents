@@ -4,8 +4,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 
 vi.mock('./api', () => ({
-  ApiError: class ApiError extends Error { constructor(message: string, readonly status = 0) { super(message) } },
-  setAccessPassword: vi.fn(),
+  ApiError: class ApiError extends Error {},
   api: {
     listSessions: vi.fn().mockResolvedValue([]),
     createQuery: vi.fn(),
@@ -15,7 +14,7 @@ vi.mock('./api', () => ({
   },
 }))
 
-import { api, ApiError, setAccessPassword } from './api'
+import { api } from './api'
 
 describe('SQLBuddy web form', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -67,18 +66,6 @@ describe('SQLBuddy web form', () => {
     await userEvent.type(screen.getByLabelText('WHAT WOULD YOU LIKE TO QUERY?'), 'Show users')
     await userEvent.click(screen.getByRole('button', { name: /Ask SQLBuddy/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong')
-  })
-
-  it('asks for the workspace password when the API requires authentication', async () => {
-    vi.mocked(api.listSessions).mockRejectedValueOnce(new ApiError('Enter the SQLBuddy access password.', 401))
-    render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Welcome to SQLBuddy' })).toBeInTheDocument()
-    vi.mocked(api.listSessions).mockResolvedValueOnce([])
-    await userEvent.type(screen.getByLabelText('Access password'), 'long-test-password')
-    await userEvent.click(screen.getByRole('button', { name: /Continue/ }))
-    await waitFor(() => expect(api.listSessions).toHaveBeenCalledTimes(2))
-    expect(setAccessPassword).toHaveBeenCalledWith('long-test-password')
-    expect(await screen.findByRole('heading', { name: 'SQL, clearly.' })).toBeInTheDocument()
   })
 
   it('reopens a saved session and restores its latest question and answer', async () => {

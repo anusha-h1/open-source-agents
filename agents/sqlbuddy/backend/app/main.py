@@ -1,20 +1,15 @@
 """FastAPI application for SQLBuddy's local web interface."""
 
-import base64
-import binascii
-import hmac
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import HistoryStore
@@ -26,36 +21,8 @@ logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
 
-def has_valid_access_password(authorization: str, expected_password: str) -> bool:
-    """Check one Basic authorization header without logging its contents."""
-    if not authorization.startswith("Basic "):
-        return False
-    try:
-        decoded = base64.b64decode(authorization[6:], validate=True).decode("utf-8")
-        username, separator, password = decoded.partition(":")
-    except (binascii.Error, UnicodeDecodeError):
-        return False
-    return (
-        separator == ":"
-        and username == "sqlbuddy"
-        and hmac.compare_digest(password.encode("utf-8"), expected_password.encode("utf-8"))
-    )
-
-
-def validate_access_password_config(required: bool, password: str) -> None:
-    """Fail at startup if a public deployment would be left unprotected."""
-    if required and len(password) < 16:
-        raise RuntimeError(
-            "SQLBUDDY_ACCESS_PASSWORD must be at least 16 characters when "
-            "SQLBUDDY_REQUIRE_ACCESS_PASSWORD is enabled."
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    validate_access_password_config(
-        settings.require_access_password, settings.access_password
-    )
     store = HistoryStore(settings.database_path)
     store.initialize()
     app.state.history = store
@@ -74,27 +41,9 @@ app.add_middleware(
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type"],
 )
 app.add_middleware(RateLimiter, settings.rate_limit_requests, settings.rate_limit_window_seconds)
-
-
-@app.middleware("http")
-async def require_access_password(request: Request, call_next):
-    """Protect API data and Gemini usage in public deployments with Basic auth."""
-    if (
-        settings.require_access_password
-        and request.url.path.startswith("/api/v1/")
-        and request.url.path != "/api/v1/health"
-        and request.method != "OPTIONS"
-    ):
-        authorization = request.headers.get("authorization", "")
-        if not has_valid_access_password(authorization, settings.access_password):
-            return JSONResponse(
-                status_code=401,
-                content={"error": {"code": "authentication_required", "message": "Enter the SQLBuddy access password."}},
-            )
-    return await call_next(request)
 
 
 @app.exception_handler(ServiceError)
@@ -126,12 +75,6 @@ def health(request: Request):
     """Report service and history availability without exposing secrets."""
     available = request.app.state.history.check()
     return JSONResponse(status_code=200 if available else 503, content={"status": "ok" if available else "degraded", "history": "available" if available else "unavailable"})
-
-
-@app.get("/api/v1/auth/check")
-def check_authentication():
-    """Confirm the caller supplied the configured access password."""
-    return {"authenticated": True}
 
 
 @app.post("/api/v1/queries", response_model=QueryResponse, status_code=201)
@@ -181,9 +124,3 @@ def delete_session(session_id: UUID, request: Request):
 def schema_example():
     """Return a small example schema to help format optional context."""
     return SchemaInput.model_validate({"tables": [{"name": "users", "columns": ["id", "email", "created_at"]}]})
-
-
-# Production Docker images include the built frontend. Local development uses Vite.
-frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-if frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
