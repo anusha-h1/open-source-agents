@@ -1,175 +1,154 @@
-# [Project Name]
+# SQLBuddy
 
-> [One-sentence summary of what this project does and the value it provides.]
+SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript website talks to a Python FastAPI service, which asks Google Gemini for a structured, read-only SQL suggestion. SQLite stores the app's saved questions and answers. The original Python command-line app remains available.
 
----
+## What it can do
 
-## Overview
+- Ask in plain English and choose PostgreSQL, MySQL, or SQLite.
+- Add table and column context by typing JSON or selecting a local JSON file.
+- Review the suggested SQL, explanation, assumptions, risks, and unverified status.
+- Copy SQL and create, reopen, rename, and delete saved sessions.
+- Keep saved history in a local SQLite database. SQLBuddy never connects to your database or executes SQL.
+- Keep the Gemini key in the backend environment only.
 
-### Problem Statement & Intended Users
-- **Problem**: Explain what specific problem or challenge this project addresses.
-- **Intended Users**: Who is this tool or agent built for? (e.g., developers, researchers, operations engineers).
+## Requirements
 
-### Key Features
-- Feature 1: Brief description of the capability.
-- Feature 2: Brief description of the capability.
-- Feature 3: Brief description of the capability.
+- Python 3.10 or newer and Node.js 20 or newer for running without Docker.
+- Docker Desktop (optional, for the one-command container setup).
+- A Gemini API key for actual AI answers. UI, API, and tests can be checked without making live model requests.
 
----
+## Windows PowerShell: first-time setup
 
-## Technical Stack
+Run these commands from the repository root (`open-source-agents`):
 
-List the primary frameworks, languages, models, and external services used:
-- **Language & Runtime**: e.g., Python 3.11+ / Node.js 20+ / TypeScript
-- **Agent Framework / Core Library**: e.g., Google ADK / LangGraph / CrewAI / OpenAI Agents SDK / Model Context Protocol (MCP) / Vanilla script
-- **Models**: e.g., Gemini 2.5 Flash / GPT-4o / Claude 3.5 Sonnet / Local model (e.g., Ollama)
-- **External APIs / Tools**: e.g., Tavily Search / GitHub API / SQLite
-
----
-
-## Architecture & Data Flow
-
-Provide a brief explanation or diagram showing how components interact (e.g., input -> agent reasoning -> tool execution -> output):
-
-```
-[User Input] --> [Agent / Runner] --> [LLM / Reasoning Loop]
-                         |
-                         +--> [Tool / External API / MCP Server]
-                         |
-[Structured Output] <-- [Agent Response]
+```powershell
+cd agents\sqlbuddy
+if (-not (Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
+notepad backend\.env
 ```
 
-*(Note: For simple scripts or single utilities, replace this diagram with a short paragraph describing the execution flow.)*
+In Notepad, replace `your_gemini_api_key_here` with your Gemini key, save, and close the window. The backend loads `backend\.env` when it starts. Never share or commit this file. The CLI's root `.env` is separate and is not overwritten.
 
----
+### Start the backend
 
-## Prerequisites
+Open a PowerShell window in `agents\sqlbuddy` and run:
 
-Before running this project, ensure you have:
-- [Language Runtime, e.g., Python 3.10+ or Node.js 18+]
-- [Package manager, e.g., pip / uv / npm / pnpm]
-- [Required API keys or service accounts]
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend\requirements.txt
+python -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
 
----
+If PowerShell says script activation is disabled, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that window, then activate again. Keep this backend window running. The API health check is at <http://localhost:8000/api/v1/health>; interactive API documentation is at <http://localhost:8000/docs>.
 
-## Installation & Setup
+### Start the website
 
-1. **Navigate to the project directory:**
-   ```bash
-   cd agents/<project-slug>   # or tools/<project-slug>
-   ```
+Open a **second** PowerShell window, go to the same `agents\sqlbuddy` folder, then run:
 
-2. **Set up the virtual environment / install dependencies:**
-   - For Python:
-     ```bash
-     python -m venv .venv
-     # Windows:
-     .venv\Scripts\activate
-     # Linux/macOS:
-     source .venv/bin/activate
+```powershell
+cd agents\sqlbuddy
+cd frontend
+npm install
+npm run dev
+```
 
-     pip install -r requirements.txt
-     ```
-   - For Node.js / TypeScript:
-     ```bash
-     npm install
-     ```
+Open <http://localhost:5173> in your browser. Leave both terminal windows open while using SQLBuddy. Press **Ctrl+C** in each window to stop its server.
 
-3. **Configure Environment Variables:**
-   Copy the example environment file and fill in your keys:
-   ```bash
-   cp .env.example .env
-   ```
+### Run with Docker Desktop
 
----
+From `agents\sqlbuddy`, after setting the key in `backend\.env`, run:
 
-## Configuration & Environment Variables
+```powershell
+docker compose up --build
+```
 
-| Variable Name | Required | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `API_KEY` | Yes | *None* | API key for the primary LLM provider |
-| `MODEL_NAME` | No | `gemini-2.5-flash` | Identifier for the LLM model to use |
-| `LOG_LEVEL` | No | `info` | Logging verbosity (`debug`, `info`, `warn`, `error`) |
+Open <http://localhost:5173>. Docker Compose stores history in a named volume. Stop the app with **Ctrl+C**, then run `docker compose down` when you want to stop and remove its containers. The database volume remains so your saved history persists.
 
-*(Add any additional variables your project requires. Never publish actual secrets or default private tokens here.)*
+## Schema JSON example
 
----
+The schema file is read locally by the browser, checked, and sent to the backend as context. It is never used to open a database connection.
 
-## How to Run
+```json
+{
+  "tables": [
+    { "name": "users", "columns": ["id", "email", "created_at"] },
+    { "name": "orders", "columns": ["id", "user_id", "total", "created_at"] }
+  ]
+}
+```
 
-Provide the exact command(s) to run the agent or tool:
+Files may contain up to 100 tables and 100 columns per table, with a 12,000-character size limit. Do not include private or sensitive data.
 
-```bash
-# Example for Python:
+## API overview
+
+All application routes are versioned under `/api/v1`:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Check API and local history availability |
+| `GET` | `/schema/example` | Return a sample schema JSON structure |
+| `POST` | `/queries` | Generate and save a SQL suggestion |
+| `GET` | `/sessions` | List saved sessions |
+| `GET` | `/sessions/{id}` | Reopen a session and its messages |
+| `PATCH` | `/sessions/{id}` | Rename a saved session |
+| `DELETE` | `/sessions/{id}` | Delete a session and its messages |
+
+## Configuration
+
+`agents/sqlbuddy/.env.example` lists the settings. Backend settings are read when its process starts.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | Empty | Secret key read from `backend/.env` by the backend |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model identifier |
+| `LOG_LEVEL` | `WARNING` in the example | Python log verbosity |
+| `SQLBUDDY_DATABASE_PATH` | `./data/sqlbuddy.db` | Local history database file |
+| `SQLBUDDY_FRONTEND_ORIGIN` | `http://localhost:5173` | Allowed browser origin for API requests |
+| `SQLBUDDY_RATE_LIMIT_REQUESTS` | `20` | Requests allowed per client in the time window |
+| `SQLBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate-limit window length |
+| `SQLBUDDY_REQUEST_TIMEOUT_SECONDS` | `120` | Gemini request timeout |
+| `SQLBUDDY_MAX_QUESTION_CHARS` | `4000` | Maximum question length |
+| `SQLBUDDY_MAX_SCHEMA_CHARS` | `12000` | Maximum schema context length |
+
+SQLite tables are created at startup and tracked with a schema version row. SQLBuddy stores prompts and answers in your local history file. Prompts are also sent to Google Gemini for generation; avoid submitting secrets, personal information, or confidential database details.
+
+## Tests and checks
+
+From `agents/sqlbuddy` with the virtual environment active:
+
+```powershell
+python -m pip install -r backend\requirements-dev.txt
+python -m unittest discover -s tests -v
+python -m pytest backend\tests -v --basetemp=backend\.pytest-tmp
+```
+
+In another PowerShell window, from `agents/sqlbuddy\frontend`:
+
+```powershell
+npm test
+npm run build
+```
+
+The Python tests replace the model call with a fake answer; frontend tests mock the API. They do not need a Gemini key or internet access to the model.
+
+## Keep using the command-line version
+
+The original CLI is unchanged. From `agents/sqlbuddy`, activate the virtual environment and install its dependencies if needed, then run:
+
+```powershell
 python main.py
-
-# Example with arguments:
-python main.py --query "Summarize the latest release notes"
-
-# Example for Node.js / TypeScript:
-npm start
 ```
 
----
+## Safety and limitations
 
-## Example Input & Output
-
-### Example Input
-```
-"Analyze the repository structure of gdgcblr/open-source-agents and list the core directories."
-```
-
-### Example Output
-```
-Analysis completed:
-- agents/: Contains community AI agents.
-- tools/: Contains shared developer utilities and MCP servers.
-- template/: Standardized documentation and environment templates.
-```
-
----
-
-## How to Test
-
-Explain how another developer or reviewer can verify that the project functions as intended:
-
-```bash
-# Example: Run automated test suite
-pytest
-
-# Or manual verification steps:
-# 1. Run python main.py --test-mode
-# 2. Verify that mock output returns successfully without API errors
-```
-
----
-
-## Known Limitations
-
-Be honest about constraints, edge cases, and failure modes:
-- e.g., Rate limits on free-tier APIs may cause retries to fail.
-- e.g., Currently only tested on text files smaller than 10MB.
-- e.g., Does not maintain conversation memory across separate process restarts.
-
----
-
-## Security & Privacy Considerations
-
-- **Secrets Handling**: How are credentials loaded and protected?
-- **Data Privacy**: Is any prompt or file data transmitted to external services or third parties?
-- **Safety**: Does the agent execute arbitrary shell commands or code? If so, what sandboxing or user confirmations are enforced?
-
----
-
-## Future Improvements
-
-- [ ] Add caching for external API responses.
-- [ ] Support local models via Ollama.
-- [ ] Add streaming responses.
-
----
+- The app suggests SQL as text only. It never connects to a customer database or executes a query.
+- The backend asks for read-only output and blocks model responses that do not look like a single SELECT or read-only WITH statement. This is a cautious check, not a formal SQL parser; review every suggestion before use.
+- SQLite history is local and has no user accounts or encryption. Anyone with access to your Windows account and files can read it.
+- Rate limiting is in memory for one backend process. It resets on restart and is designed for local use, not a multi-server deployment.
+- Gemini model availability, quality, and request limits depend on the Google account and selected model.
+- This project is configured for local development. Do not expose the backend publicly without adding authentication and deployment-specific security controls.
 
 ## License
 
-Specify the license for this subproject if different from the parent repository, or state:
-*This project is contributed under the repository's open-source license.*
+This project is contributed under the repository's MIT license.
