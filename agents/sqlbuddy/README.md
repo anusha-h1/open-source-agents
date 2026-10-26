@@ -2,6 +2,22 @@
 
 SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript website talks to a Python FastAPI service, which asks Google Gemini for a structured, read-only SQL suggestion. SQLite stores the app's saved questions and answers. The original Python command-line app remains available.
 
+## Contents
+
+- [Features](#what-it-can-do)
+- [Screenshot](#screenshot)
+- [How a request flows](#how-a-request-flows)
+- [Requirements](#requirements)
+- [Windows PowerShell setup](#windows-powershell-first-time-setup)
+- [Docker setup](#run-with-docker-desktop)
+- [Schema JSON example](#schema-json-example)
+- [API overview](#api-overview)
+- [Configuration](#configuration)
+- [Tests and checks](#tests-and-checks)
+- [Troubleshooting](#troubleshooting)
+- [Command-line app](#keep-using-the-command-line-version)
+- [Safety and limitations](#safety-and-limitations)
+
 ## What it can do
 
 - Ask in plain English and choose PostgreSQL, MySQL, or SQLite.
@@ -10,6 +26,40 @@ SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript 
 - Copy SQL and create, reopen, rename, and delete saved sessions.
 - Keep saved history in a local SQLite database. SQLBuddy never connects to your database or executes SQL.
 - Keep the Gemini key in the backend environment only.
+
+## Screenshot
+
+This screenshot shows SQLBuddy generating a query, explaining it, and listing assumptions and risks. The query is displayed as text and is not run against a database.
+
+![SQLBuddy showing a generated SQL suggestion and backend request logs](docs/screenshots/sqlbuddy-result.png)
+
+## How a request flows
+
+The browser sends the question, selected SQL dialect, and optional schema context to the local API. The backend asks Gemini for a read-only suggestion, validates the response, saves it in local SQLite history, and returns it to the browser. SQLBuddy never connects to or executes queries against a user database.
+
+```mermaid
+flowchart TD
+    User[User enters a question] --> Form[React frontend validates question, dialect, and optional schema]
+    Form --> API[FastAPI endpoint /api/v1/queries]
+    API --> Limit{Within local rate limit?}
+    Limit -- No --> SafeError[Return a safe error]
+    Limit -- Yes --> Prompt[Build prompt with untrusted user data]
+    Prompt --> Gemini[Google Gemini API]
+    Gemini --> Validate{Valid read-only SQL response?}
+    Validate -- No --> SafeError
+    Validate -- Yes --> History[(SQLite session history)]
+    History --> Result[Return SQL, explanation, assumptions, and risks]
+    Result --> User
+```
+
+### Main components
+
+| Component | Responsibility |
+| --- | --- |
+| React + TypeScript frontend | Collects questions and schema context, shows results, and manages saved-session controls. |
+| FastAPI backend | Validates requests, calls Gemini, blocks unsafe SQL responses, and exposes the `/api/v1` API. |
+| SQLite history store | Saves question sessions and answers locally on this computer. |
+| Google Gemini API | Generates the suggested SQL and explanation; it never receives a database connection. |
 
 ## Requirements
 
@@ -131,6 +181,18 @@ npm run build
 ```
 
 The Python tests replace the model call with a fake answer; frontend tests mock the API. They do not need a Gemini key or internet access to the model.
+
+## Troubleshooting
+
+| What you see | What to check |
+| --- | --- |
+| `ModuleNotFoundError: No module named 'app'` | In PowerShell, go to `agents\sqlbuddy`, activate `.venv`, then run `python -m uvicorn app.main:app --app-dir backend --reload --port 8000`. |
+| `localhost:5173` refuses to connect | Start the frontend in a second PowerShell window: `cd agents\sqlbuddy\frontend` followed by `npm run dev`. |
+| `localhost:8000/api/v1/health` refuses to connect | Start the backend and wait for `Application startup complete`. The page should return `status: ok`. |
+| Gemini returns HTTP 401 or 403 | Confirm `GEMINI_API_KEY` is set in `backend\.env`, and check that the key is enabled for the Gemini API. Never paste the key into an issue or screenshot. |
+| Gemini returns HTTP 404 | Check that `GEMINI_MODEL` in `backend\.env` names a model available to your Google project. Restart the backend after changing it. |
+| Gemini times out | Confirm your internet connection, then try again later. A successful health check only confirms the local API and SQLite history; it does not test Gemini. |
+| The page reports it cannot contact Gemini | Check the backend PowerShell window for the newest error. Keep that window open while using the website. |
 
 ## Keep using the command-line version
 
