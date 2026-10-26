@@ -1,6 +1,6 @@
 # SQLBuddy
 
-SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript website talks to a Python FastAPI service, which asks Google Gemini for a structured, read-only SQL suggestion. SQLite stores the app's saved questions and answers. The original Python command-line app remains available.
+SQLBuddy is a full-stack SQL learning assistant that can run on your computer or as a password-protected private workspace on Render. The React and TypeScript website talks to a Python FastAPI service, which asks Google Gemini for a structured, read-only SQL suggestion. SQLite stores saved questions and answers. The original Python command-line app remains available.
 
 ## Contents
 
@@ -10,6 +10,7 @@ SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript 
 - [Requirements](#requirements)
 - [Windows PowerShell setup](#windows-powershell-first-time-setup)
 - [Docker setup](#run-with-docker-desktop)
+- [Render hosting](#deploy-a-private-live-app-on-render)
 - [Schema JSON example](#schema-json-example)
 - [API overview](#api-overview)
 - [Configuration](#configuration)
@@ -24,7 +25,7 @@ SQLBuddy is a local full-stack SQL learning assistant. The React and TypeScript 
 - Add table and column context by typing JSON or selecting a local JSON file.
 - Review the suggested SQL, explanation, assumptions, risks, and unverified status.
 - Copy SQL and create, reopen, rename, and delete saved sessions.
-- Keep saved history in a local SQLite database. SQLBuddy never connects to your database or executes SQL.
+- Keep saved history in a SQLite database. SQLBuddy never connects to your database or executes SQL.
 - Keep the Gemini key in the backend environment only.
 
 ## Screenshot
@@ -35,12 +36,15 @@ This screenshot shows SQLBuddy generating a query, explaining it, and listing as
 
 ## How a request flows
 
-The browser sends the question, selected SQL dialect, and optional schema context to the local API. The backend asks Gemini for a read-only suggestion, validates the response, saves it in local SQLite history, and returns it to the browser. SQLBuddy never connects to or executes queries against a user database.
+The browser sends the question, selected SQL dialect, and optional schema context to the API. A public Render deployment first requires the workspace password. The backend asks Gemini for a read-only suggestion, validates the response, saves it in SQLite history, and returns it to the browser. SQLBuddy never connects to or executes queries against a user database.
 
 ```mermaid
 flowchart TD
     User[User enters a question] --> Form[React frontend validates question, dialect, and optional schema]
-    Form --> API[FastAPI endpoint /api/v1/queries]
+    Form --> Auth{Password required?}
+    Auth -- Yes --> Check[Check access password]
+    Auth -- No --> API[FastAPI endpoint /api/v1/queries]
+    Check --> API
     API --> Limit{Within local rate limit?}
     Limit -- No --> SafeError[Return a safe error]
     Limit -- Yes --> Prompt[Build prompt with untrusted user data]
@@ -60,6 +64,8 @@ flowchart TD
 | FastAPI backend | Validates requests, calls Gemini, blocks unsafe SQL responses, and exposes the `/api/v1` API. |
 | SQLite history store | Saves question sessions and answers locally on this computer. |
 | Google Gemini API | Generates the suggested SQL and explanation; it never receives a database connection. |
+
+On Render, the frontend and API are served from one HTTPS origin. A single shared access password protects all API routes except the health check. People who share that password share the same saved history, so only give it to people you trust.
 
 ## Requirements
 
@@ -115,6 +121,18 @@ docker compose up --build
 
 Open <http://localhost:5173>. Docker Compose stores history in a named volume. Stop the app with **Ctrl+C**, then run `docker compose down` when you want to stop and remove its containers. The database volume remains so your saved history persists.
 
+### Deploy a private live app on Render
+
+The repository includes a Render Blueprint at `render.yaml` and a production Dockerfile. This runs the built frontend and backend together, protects API usage with a shared access password, and stores SQLite history on a persistent disk.
+
+1. Sign in to Render and choose **New → Blueprint**.
+2. Connect the `open-source-agents` GitHub repository and select the `feat/sqlbuddy-ai-sql-assistant` branch. Render reads the root `render.yaml` file.
+3. Review the service plan and disk charge on Render's confirmation screen before creating the service. The configured plan is paid because Render's free web service cannot keep SQLite data on a persistent disk. Current published rates list the 0.5 CPU / 512 MB web service at **$7 per month** and a 1 GB disk at **$0.25 per month**, before any usage-based charges. Verify the amount in your Render dashboard before accepting it.
+4. When Render asks for secret values, enter your Gemini API key in `GEMINI_API_KEY` and create a private access password of at least 16 characters for `SQLBUDDY_ACCESS_PASSWORD`. Do not put either value in GitHub or this file. Render stores these as service environment secrets.
+5. Wait for the first deployment to finish. Open the `onrender.com` URL shown in the service page, enter the access password, and try a question. The health check is at `<your-render-url>/api/v1/health`.
+
+The health check does not call Gemini. To verify Gemini, ask SQLBuddy a simple question after signing in. The shared password protects the app from casual public use but is not individual user accounts: everyone with the password can view, rename, and delete the same saved sessions. Use this deployment for your own trusted group, not confidential data or a public multi-user service. Render free web services may spin down when idle and lose local filesystem changes, so this Blueprint uses a paid persistent disk to retain history. [Render's pricing](https://render.com/pricing) and [free service limitations](https://render.com/docs/free) can change; the dashboard shows the charge before you create the service.
+
 ## Schema JSON example
 
 The schema file is read locally by the browser, checked, and sent to the backend as context. It is never used to open a database connection.
@@ -137,6 +155,7 @@ All application routes are versioned under `/api/v1`:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Check API and local history availability |
+| `GET` | `/auth/check` | Confirm the caller supplied the shared password |
 | `GET` | `/schema/example` | Return a sample schema JSON structure |
 | `POST` | `/queries` | Generate and save a SQL suggestion |
 | `GET` | `/sessions` | List saved sessions |
@@ -146,7 +165,7 @@ All application routes are versioned under `/api/v1`:
 
 ## Configuration
 
-`agents/sqlbuddy/.env.example` lists the settings. Backend settings are read when its process starts.
+`agents/sqlbuddy/.env.example` lists the settings. Backend settings are read when its process starts. In a hosted deployment, set secrets in the hosting dashboard instead of creating or uploading a `.env` file.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -155,6 +174,8 @@ All application routes are versioned under `/api/v1`:
 | `LOG_LEVEL` | `WARNING` in the example | Python log verbosity |
 | `SQLBUDDY_DATABASE_PATH` | `./data/sqlbuddy.db` | Local history database file |
 | `SQLBUDDY_FRONTEND_ORIGIN` | `http://localhost:5173` | Allowed browser origin for API requests |
+| `SQLBUDDY_REQUIRE_ACCESS_PASSWORD` | `false` | Require the access password on API routes; enable for public hosting |
+| `SQLBUDDY_ACCESS_PASSWORD` | Empty | Private shared password for the hosted workspace; use at least 16 characters |
 | `SQLBUDDY_RATE_LIMIT_REQUESTS` | `20` | Requests allowed per client in the time window |
 | `SQLBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate-limit window length |
 | `SQLBUDDY_REQUEST_TIMEOUT_SECONDS` | `120` | Gemini request timeout |
@@ -206,10 +227,10 @@ python main.py
 
 - The app suggests SQL as text only. It never connects to a customer database or executes a query.
 - The backend asks for read-only output and blocks model responses that do not look like a single SELECT or read-only WITH statement. This is a cautious check, not a formal SQL parser; review every suggestion before use.
-- SQLite history is local and has no user accounts or encryption. Anyone with access to your Windows account and files can read it.
-- Rate limiting is in memory for one backend process. It resets on restart and is designed for local use, not a multi-server deployment.
+- SQLite history has no user accounts or per-person separation. On a Render deployment it is stored on the service's persistent disk; anyone with the shared password can access all saved sessions.
+- Rate limiting is in memory for one backend process. It resets on restart and is configured for a single app instance, not a multi-server deployment.
 - Gemini model availability, quality, and request limits depend on the Google account and selected model.
-- This project is configured for local development. Do not expose the backend publicly without adding authentication and deployment-specific security controls.
+- The Render setup is intended for one private shared-password workspace. It does not provide individual accounts, session ownership, encrypted history, or a managed database. Do not use it for confidential data or as a public multi-user service.
 
 ## License
 
