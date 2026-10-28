@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: sqlbuddyaiagent-api
+    runtime: python
+    plan: free
+    rootDir: agents/sqlbuddy/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: SQLBUDDY_FRONTEND_ORIGIN
+        value: https://sqlbuddyaiagent.netlify.app
+      - key: SQLBUDDY_DATABASE_PATH
+        value: /tmp/sqlbuddy.db
+      - key: SQLBUDDY_REQUEST_TIMEOUT_SECONDS
+        value: "120"
+      - key: SQLBUDDY_RATE_LIMIT_REQUESTS
+        value: "5"
+      - key: SQLBUDDY_RATE_LIMIT_WINDOW_SECONDS
+        value: "60"

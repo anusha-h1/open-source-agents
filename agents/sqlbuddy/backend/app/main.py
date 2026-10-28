@@ -4,9 +4,10 @@ import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -41,9 +42,25 @@ app.add_middleware(
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-SQLBuddy-Client-ID"],
 )
 app.add_middleware(RateLimiter, settings.rate_limit_requests, settings.rate_limit_window_seconds)
+
+
+def _history_owner(request: Request, client_id: str | None) -> str:
+    """Scope anonymous saved history to a browser ID, with a local-only legacy scope."""
+    if client_id == "local" and settings.frontend_origin.startswith(
+        ("http://localhost", "http://127.0.0.1")
+    ):
+        return "local"
+    if client_id:
+        try:
+            return f"browser:{UUID(client_id)}"
+        except ValueError:
+            pass
+    client = getattr(request, "client", None)
+    address = getattr(client, "host", "local")
+    return f"anonymous:{address}"
 
 
 @app.exception_handler(ServiceError)
@@ -78,7 +95,11 @@ def health(request: Request):
 
 
 @app.post("/api/v1/queries", response_model=QueryResponse, status_code=201)
-def create_query(payload: QueryRequest, request: Request):
+def create_query(
+    payload: QueryRequest,
+    request: Request,
+    client_id: Annotated[str | None, Header(alias="X-SQLBuddy-Client-ID")] = None,
+):
     """Generate one answer and persist it in the selected history session."""
     if len(payload.question) > settings.max_question_chars:
         return JSONResponse(status_code=413, content={"error": {"code": "question_too_large", "message": "The question is too long."}})
@@ -87,35 +108,57 @@ def create_query(payload: QueryRequest, request: Request):
         return JSONResponse(status_code=413, content={"error": {"code": "schema_too_large", "message": "The schema details are too large."}})
     answer: Answer = request.app.state.answer_generator(payload)
     try:
-        session_id, created_at = request.app.state.history.add_message(payload.session_id, payload.question, answer.model_dump(), payload.dialect)
+        session_id, created_at = request.app.state.history.add_message(
+            payload.session_id, payload.question, answer.model_dump(), payload.dialect,
+            _history_owner(request, client_id),
+        )
     except KeyError:
         return JSONResponse(status_code=404, content={"error": {"code": "session_not_found", "message": "Saved session was not found."}})
     return QueryResponse(session_id=session_id, answer=answer, dialect=payload.dialect, created_at=datetime.fromisoformat(created_at))
 
 
 @app.get("/api/v1/sessions", response_model=list[SessionSummary])
-def list_sessions(request: Request):
-    return request.app.state.history.list_sessions()
+def list_sessions(
+    request: Request,
+    client_id: Annotated[str | None, Header(alias="X-SQLBuddy-Client-ID")] = None,
+):
+    return request.app.state.history.list_sessions(_history_owner(request, client_id))
 
 
 @app.get("/api/v1/sessions/{session_id}", response_model=SessionDetail)
-def get_session(session_id: UUID, request: Request):
-    session = request.app.state.history.get_session(session_id)
+def get_session(
+    session_id: UUID,
+    request: Request,
+    client_id: Annotated[str | None, Header(alias="X-SQLBuddy-Client-ID")] = None,
+):
+    session = request.app.state.history.get_session(session_id, _history_owner(request, client_id))
     if session is None:
         return JSONResponse(status_code=404, content={"error": {"code": "session_not_found", "message": "Saved session was not found."}})
     return session
 
 
 @app.patch("/api/v1/sessions/{session_id}", response_model=SessionSummary)
-def rename_session(session_id: UUID, payload: RenameSessionRequest, request: Request):
-    if not request.app.state.history.rename_session(session_id, payload.title):
+def rename_session(
+    session_id: UUID,
+    payload: RenameSessionRequest,
+    request: Request,
+    client_id: Annotated[str | None, Header(alias="X-SQLBuddy-Client-ID")] = None,
+):
+    owner_id = _history_owner(request, client_id)
+    if not request.app.state.history.rename_session(session_id, payload.title, owner_id):
         return JSONResponse(status_code=404, content={"error": {"code": "session_not_found", "message": "Saved session was not found."}})
-    return next(session for session in request.app.state.history.list_sessions() if session["id"] == str(session_id))
+    return next(session for session in request.app.state.history.list_sessions(owner_id) if session["id"] == str(session_id))
 
 
 @app.delete("/api/v1/sessions/{session_id}", status_code=204)
-def delete_session(session_id: UUID, request: Request):
-    if not request.app.state.history.delete_session(session_id):
+def delete_session(
+    session_id: UUID,
+    request: Request,
+    client_id: Annotated[str | None, Header(alias="X-SQLBuddy-Client-ID")] = None,
+):
+    if not request.app.state.history.delete_session(
+        session_id, _history_owner(request, client_id)
+    ):
         return JSONResponse(status_code=404, content={"error": {"code": "session_not_found", "message": "Saved session was not found."}})
     return None
 

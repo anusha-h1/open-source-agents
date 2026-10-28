@@ -131,7 +131,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="SQLBuddy home"><span className="brand-mark">S</span><span>sqlbuddy<span className="brand-dot">.</span></span></a>
-        <span className="local-badge"><span /> Runs on your computer</span>
+        <span className="local-badge"><span /> SQL assistant</span>
       </header>
       <div className="workspace" id="top">
         <aside className="sidebar" aria-label="Saved sessions">
@@ -145,7 +145,7 @@ export default function App() {
               </div>
             ))}
           </div>
-          <div className="sidebar-note"><span>🔒</span><p>Your saved history stays in a local SQLite file on this computer.</p></div>
+          <div className="sidebar-note"><span>🔒</span><p>Saved history is linked to this browser. Avoid entering sensitive information.</p></div>
         </aside>
 
         <main className="main-content">

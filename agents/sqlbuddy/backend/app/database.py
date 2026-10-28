@@ -31,7 +31,8 @@ class HistoryStore:
                 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, dialect TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    owner_id TEXT NOT NULL DEFAULT 'local'
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,6 +43,14 @@ class HistoryStore:
                 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages(session_id, id);
                 """
             )
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(sessions)")
+            }
+            if "owner_id" not in columns:
+                # Existing local sessions remain available to the local browser.
+                connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local'"
+                )
             row = connection.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
             if row is None:
                 connection.execute("INSERT INTO schema_version(version) VALUES (1)")
@@ -51,7 +60,8 @@ class HistoryStore:
         return datetime.now(timezone.utc).isoformat()
 
     def add_message(
-        self, session_id: UUID | None, question: str, answer: dict[str, Any], dialect: str
+        self, session_id: UUID | None, question: str, answer: dict[str, Any], dialect: str,
+        owner_id: str = "local",
     ) -> tuple[UUID, str]:
         """Create a session when needed and save a question and its answer."""
         now = self._now()
@@ -59,14 +69,15 @@ class HistoryStore:
         session_id = session_id or uuid4()
         with self._connect() as connection:
             if not is_new and connection.execute(
-                "SELECT 1 FROM sessions WHERE id = ?", (str(session_id),)
+                "SELECT 1 FROM sessions WHERE id = ? AND owner_id = ?",
+                (str(session_id), owner_id),
             ).fetchone() is None:
                 raise KeyError("Session not found.")
             if is_new:
                 title = question[:80].strip() or "New SQL question"
                 connection.execute(
-                    "INSERT INTO sessions(id, title, dialect, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(session_id), title, dialect, now, now),
+                    "INSERT INTO sessions(id, title, dialect, created_at, updated_at, owner_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(session_id), title, dialect, now, now, owner_id),
                 )
             else:
                 connection.execute(
@@ -79,18 +90,19 @@ class HistoryStore:
             )
         return session_id, now
 
-    def list_sessions(self) -> list[dict[str, Any]]:
+    def list_sessions(self, owner_id: str = "local") -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id, title, dialect, updated_at FROM sessions ORDER BY updated_at DESC LIMIT 200"
+                "SELECT id, title, dialect, updated_at FROM sessions WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 200",
+                (owner_id,),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_session(self, session_id: UUID) -> dict[str, Any] | None:
+    def get_session(self, session_id: UUID, owner_id: str = "local") -> dict[str, Any] | None:
         with self._connect() as connection:
             session = connection.execute(
-                "SELECT id, title, dialect, updated_at FROM sessions WHERE id = ?",
-                (str(session_id),),
+                "SELECT id, title, dialect, updated_at FROM sessions WHERE id = ? AND owner_id = ?",
+                (str(session_id), owner_id),
             ).fetchone()
             if session is None:
                 return None
@@ -106,17 +118,20 @@ class HistoryStore:
         ]
         return result
 
-    def rename_session(self, session_id: UUID, title: str) -> bool:
+    def rename_session(self, session_id: UUID, title: str, owner_id: str = "local") -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-                (title, self._now(), str(session_id)),
+                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND owner_id = ?",
+                (title, self._now(), str(session_id), owner_id),
             )
         return cursor.rowcount > 0
 
-    def delete_session(self, session_id: UUID) -> bool:
+    def delete_session(self, session_id: UUID, owner_id: str = "local") -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM sessions WHERE id = ?", (str(session_id),))
+            cursor = connection.execute(
+                "DELETE FROM sessions WHERE id = ? AND owner_id = ?",
+                (str(session_id), owner_id),
+            )
         return cursor.rowcount > 0
 
     def check(self) -> bool:

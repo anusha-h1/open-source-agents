@@ -116,6 +116,19 @@ def test_query_can_append_to_existing_session(client):
     assert len(history["messages"]) == 2
 
 
+def test_browser_history_is_scoped_to_its_owner(client):
+    first_browser = "00000000-0000-0000-0000-000000000001"
+    second_browser = "00000000-0000-0000-0000-000000000002"
+    payload = QueryRequest.model_validate({"question": "List users"})
+    created = api.create_query(payload, client, first_browser)
+
+    assert api.list_sessions(client, first_browser)[0]["id"] == str(created.session_id)
+    assert api.list_sessions(client, second_browser) == []
+    assert api.get_session(created.session_id, client, second_browser).status_code == 404
+    assert api.delete_session(created.session_id, client, second_browser).status_code == 404
+    assert api.get_session(created.session_id, client, first_browser)["id"] == str(created.session_id)
+
+
 def test_health_does_not_return_configuration(client):
     response = api.health(client)
     assert response.status_code == 200
