@@ -1,0 +1,4 @@
+[build]
+  base = "agents/sqlbuddy/frontend"
+  command = "npm run build"
+  publish = "dist"
